@@ -116,6 +116,13 @@ module Rufus
       r == false ? nil : r
     end
 
+    def try_get(type, key)
+
+      r = try_lock(:read, type, key) { |f| do_get(f) }
+
+      r == false ? nil : r
+    end
+
     # Attempts at deleting a document. You have to pass the current version
     # or at least the { '_id' => i, 'type' => t, '_rev' => r }.
     #
@@ -186,6 +193,7 @@ module Rufus
 
       limit = opts['limit']
       skip = opts['skip']
+      noblock = opts['noblock']
       count = opts['count'] ? 0 : nil
 
       files = Dir[File.join(d, '**', '*.json')].sort_by { |f| File.basename(f) }
@@ -200,7 +208,12 @@ module Rufus
           skipped = skipped + 1
           next if skip and skipped <= skip
 
-          doc = get(type, key)
+          unless noblock
+            doc = get(type, key)
+          else
+            doc = try_get(type, key)
+          end
+
           next unless doc
 
           if count
@@ -306,7 +319,7 @@ module Rufus
 
           if ltype == :write
             Thread.pass
-            21.times { return false unless File.exist?(fn) }
+            2.times { return false unless File.exist?(fn) }
           end
             #
             # We got the lock, but is the file still here?
@@ -332,6 +345,55 @@ module Rufus
         end
       end
     end
+
+    def try_lock(ltype, type, key, &block)
+
+      @mutex.synchronize do
+        begin
+
+          d, f = path_for(type, key)
+          fn = File.join(d, f)
+
+          FileUtils.mkdir_p(d) if ltype == :create && ( ! File.exist?(d))
+          FileUtils.touch(fn) if ltype == :create && ( ! File.exist?(fn))
+
+          file = File.new(fn, 'r+') rescue nil
+
+          return false if file.nil?
+
+          file.flock(File::LOCK_EX | File::LOCK_NB) unless @nolock
+
+          return false unless file
+
+          if ltype == :write
+            Thread.pass
+            2.times { return false unless File.exist?(fn) }
+          end
+            #
+            # We got the lock, but is the file still here?
+            #
+            # Asking more than one time, since, at least on OSX snoleo,
+            # File.exist? might say yes for a file just deleted
+            # (by another process)
+
+          block.call(file)
+
+        ensure
+          begin
+            file.flock(File::LOCK_UN) unless @nolock
+          rescue Exception => e
+            #p [ :lock, @fpath, e ]
+            #e.backtrace.each { |l| puts l }
+          end
+          begin
+            file.close if file
+          rescue Exception => e
+            #p [ :close_fail, e ]
+          end
+        end
+      end
+    end
+
   end
 end
 
