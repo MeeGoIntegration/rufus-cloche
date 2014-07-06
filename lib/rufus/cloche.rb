@@ -151,8 +151,8 @@ module Rufus
           return cur if cur['_rev'] != drev
 
           begin
-            f.close
             File.delete(f.path)
+            f.close
             nil
           rescue Exception => e
             #p e
@@ -317,16 +317,8 @@ module Rufus
 
           file.flock(File::LOCK_EX) unless @nolock
 
-          if ltype == :write
-            Thread.pass
-            2.times { return false unless File.exist?(fn) }
-          end
-            #
-            # We got the lock, but is the file still here?
-            #
-            # Asking more than one time, since, at least on OSX snoleo,
-            # File.exist? might say yes for a file just deleted
-            # (by another process)
+          return false unless File.exist?(fn)
+          # the file might get deleted between opening it and getting a lock
 
           block.call(file)
 
@@ -361,20 +353,11 @@ module Rufus
 
           return false if file.nil?
 
-          file.flock(File::LOCK_EX | File::LOCK_NB) unless @nolock
+          locked = file.flock(File::LOCK_EX | File::LOCK_NB) unless @nolock
 
-          return false unless file
-
-          if ltype == :write
-            Thread.pass
-            2.times { return false unless File.exist?(fn) }
-          end
-            #
-            # We got the lock, but is the file still here?
-            #
-            # Asking more than one time, since, at least on OSX snoleo,
-            # File.exist? might say yes for a file just deleted
-            # (by another process)
+          return false unless locked && File.exist?(fn)
+          # return if someone else grabbed the lock before us
+          # or the file got deleted between opening it and getting a lock
 
           block.call(file)
 
